@@ -59,6 +59,9 @@ def create_app(settings=None, store=None):
     async def detail(tid:UUID,ctx=Depends(auth)):
         t=await get_ticket(tid,ctx)
         recs=[r for r in await rows('recommendations',ctx) if r['ticket_id']==str(tid)]
+        for r in recs:
+            if 'multi_agent' not in r and isinstance(r.get('analysis'), dict):
+                r['multi_agent'] = r['analysis'].get('multi_agent')
         ids={r['id'] for r in recs}
         return {'ticket':{**t,'sla':sla(t)},'recommendations':sorted(recs,key=lambda x:x['created_at'],reverse=True),'history':sorted([r for r in await rows('ticket_history',ctx) if r['ticket_id']==str(tid)],key=lambda x:x['created_at'],reverse=True),'decisions':[d for d in await rows('decisions',ctx) if d['recommendation_id'] in ids]}
     @app.get('/api/tickets/{tid}/context')
@@ -74,11 +77,14 @@ def create_app(settings=None, store=None):
         bucket.append(clock)
         t=await get_ticket(tid,ctx)
         if t['status']=='resolved': raise HTTPException(409,'Reopen the ticket before requesting a new analysis.')
-        all_t=await rows('tickets',ctx); sources=retrieve(t,all_t)
-        async with ai_slots: result=await ai.analyze(t,sources,settings)
-        ranks=rank_teams(result['category'],result['required_expertise'],await rows('teams',ctx),all_t)
-        if not ranks: raise HTTPException(409,'Configure resolver teams before analysis.')
-        record={'ticket_id':str(tid),'ticket_version':t['version'],'analysis':result,'sources':[{k:s[k] for k in ['id','number','title','solution','retrieval_score','matched_terms','is_sample']} for s in sources],'resolver':ranks[0],'model':settings.gemini_model}
+        all_t=await rows('tickets',ctx)
+        all_teams=await rows('teams',ctx)
+        if not all_teams: raise HTTPException(409,'Configure resolver teams before analysis.')
+        async with ai_slots:
+            record=await ai.analyze_ticket(t,all_t,all_teams,settings)
+        # Guarantee multi_agent is attached to analysis for Supabase jsonb storage
+        if 'multi_agent' in record and isinstance(record.get('analysis'), dict) and 'multi_agent' not in record['analysis']:
+            record['analysis']['multi_agent'] = record['multi_agent']
         return await rpc('save_recommendation',{'p_data':record,'p_actor':ctx['user']['id']},ctx)
     @app.post('/api/recommendations/{rid}/decision')
     async def decision(rid:UUID,data:Decision,ctx=Depends(engineer)):

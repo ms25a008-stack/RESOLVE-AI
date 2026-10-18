@@ -1,6 +1,10 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file='.env', extra='ignore')
+    model_config = SettingsConfigDict(
+        env_file='.env',
+        extra='ignore'
+    )
     demo_mode: bool = False
     supabase_url: str = ''
     supabase_anon_key: str = ''
@@ -9,3 +13,5 @@ class Settings(BaseSettings):
     gemini_model: str = 'gemini-2.5-flash'
     gemini_free_tier_confirmed: bool = False
     frontend_origin: str = 'http://localhost:5173'
+    multi_agent_enabled: bool = True
+    max_resolution_retries: int = 2
